@@ -1,0 +1,7 @@
+streamlit>=1.38.0
+pypdf
+python-pptx
+dashscope
+pandas
+openpyxl
+python-docx>=1.1.2   # ← 新增这一行（必须）
