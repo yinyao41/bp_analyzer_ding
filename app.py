@@ -4,6 +4,7 @@ from pypdf import PdfReader
 from pptx import Presentation
 import dashscope
 import os
+import io                     # ← 新增，必须导入
 from docx import Document
 
 # ==========================
@@ -12,7 +13,7 @@ from docx import Document
 dashscope.api_key = os.environ.get("DASHSCOPE_API_KEY")
 
 # ==========================
-# 页面设置（已去除红框提示）
+# 页面设置（已去除所有红框提示）
 # ==========================
 st.set_page_config(page_title="科技项目初筛分析", layout="wide")
 st.title("🔍 科技项目初筛分析")
@@ -23,21 +24,16 @@ st.title("🔍 科技项目初筛分析")
 @st.cache_data
 def load_builtin_knowledge():
     try:
-        # BP提示词模板（核心输出格式）
         bp_doc = Document("BP提示词内容.docx")
         bp_template = "\n".join(p.text.strip() for p in bp_doc.paragraphs if p.text.strip())
         
-        # TBS-V2
         tbs = pd.read_excel("TBS-V2.xlsx", sheet_name="Sheet2")
-        
-        # 调研要点
         survey_df = pd.read_excel("调研要点.xlsx", sheet_name=0)
-        survey_text = survey_df.to_string(index=False)
         
         return {
             "bp_template": bp_template,
             "tbs_text": tbs.to_string(index=False),
-            "survey_text": survey_text
+            "survey_text": survey_df.to_string(index=False)
         }
     except Exception as e:
         st.error(f"知识库加载失败: {e}")
@@ -46,25 +42,29 @@ def load_builtin_knowledge():
 BUILTIN_KNOWLEDGE = load_builtin_knowledge()
 
 # ==========================
-# 文件读取函数
+# 文件读取函数（已修复核心 Bug）
 # ==========================
 def extract_text_from_file(uploaded_file):
     if not uploaded_file:
         return ""
+    
     ext = os.path.splitext(uploaded_file.name)[1].lower()
     bytes_data = uploaded_file.read()
-    uploaded_file.seek(0)
+    uploaded_file.seek(0)                  # 重要：重置指针
     
     if ext == ".pdf":
-        reader = PdfReader(bytes_data)
+        reader = PdfReader(io.BytesIO(bytes_data))   # ← 关键修复
         return "\n".join(page.extract_text() or "" for page in reader.pages)
+    
     elif ext == ".pptx":
-        prs = Presentation(bytes_data)
-        return "\n".join(shape.text for slide in prs.slides for shape in slide.shapes if hasattr(shape, "text"))
+        prs = Presentation(io.BytesIO(bytes_data))   # ← 也用 BytesIO 更安全
+        return "\n".join(shape.text for slide in prs.slides 
+                        for shape in slide.shapes if hasattr(shape, "text"))
+    
     return ""
 
 # ==========================
-# 上传区域（简洁版）
+# 上传区域
 # ==========================
 uploaded_file = st.file_uploader(
     "上传项目资料（PDF / PPTX）",
@@ -111,7 +111,6 @@ if uploaded_file:
             st.subheader("📋 项目初筛分析报告")
             st.markdown(result)
             
-            # 下载按钮
             st.download_button(
                 label="📥 下载完整报告（Markdown）",
                 data=result,
