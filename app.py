@@ -42,7 +42,7 @@ def load_builtin_knowledge():
 BUILTIN_KNOWLEDGE = load_builtin_knowledge()
 
 # ==========================
-# 文件读取函数（已修复）
+# 文件读取函数
 # ==========================
 def extract_text_from_file(uploaded_file):
     if not uploaded_file:
@@ -86,33 +86,36 @@ if uploaded_file:
         prompt = f"""{BUILTIN_KNOWLEDGE['bp_template']}
 
 用户上传的BP文档内容（请严格基于此内容进行分析，不得编造任何未提及信息）：
-{doc_text[:15000]}
+{doc_text[:12000]}
 
 内置 TBS-V2 规则摘要：
-{BUILTIN_KNOWLEDGE['tbs_text'][:10000]}
+{BUILTIN_KNOWLEDGE['tbs_text'][:8000]}
 
 内置调研要点摘要：
-{BUILTIN_KNOWLEDGE['survey_text'][:5000]}
+{BUILTIN_KNOWLEDGE['survey_text'][:4000]}
 """
 
         with st.spinner("AI 正在生成结构化初筛报告..."):
             try:
+                # === 关键修复：改用 messages 格式 ===
                 response = dashscope.Generation.call(
                     model="qwen-max",
-                    prompt=prompt,
+                    messages=[{"role": "user", "content": prompt}],
+                    result_format="message",
                     temperature=0.1,
-                    max_tokens=12000,
-                    result_format="message"          # ← 关键修复
+                    max_tokens=12000
                 )
                 
-                # 新版正确的取值方式
-                result = response.output.choices[0].message.content
+                # 安全提取结果（防止 NoneType）
+                if (hasattr(response, "output") and 
+                    hasattr(response.output, "choices") and 
+                    response.output.choices):
+                    result = response.output.choices[0].message.content
+                else:
+                    result = str(response.output) if hasattr(response, "output") else "API 返回为空"
                 
             except Exception as e:
                 st.error(f"分析失败: {str(e)}")
-                # 调试用（上线后可删除）
-                if "response" in locals():
-                    st.caption(f"调试信息: {type(response)}")
                 result = ""
 
         if result:
