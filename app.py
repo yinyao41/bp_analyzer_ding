@@ -4,121 +4,119 @@ from pypdf import PdfReader
 from pptx import Presentation
 import dashscope
 import os
-import io
-from docx import Document   # 新增：支持读取 BP提示词内容.docx
+from docx import Document
 
-# ────────────────────────────────────────────────
-# 1. 全局常量 & 缓存读取（程序启动时执行一次）
-# ────────────────────────────────────────────────
-@st.cache_data(show_spinner="正在加载内置知识库...")
+# ==========================
+# 获取 API Key
+# ==========================
+dashscope.api_key = os.environ.get("DASHSCOPE_API_KEY")
+
+# ==========================
+# 页面设置（已去除红框提示）
+# ==========================
+st.set_page_config(page_title="科技项目初筛分析", layout="wide")
+st.title("🔍 科技项目初筛分析")
+
+# ==========================
+# 加载内置知识库（BP提示词 + TBS-V2 + 调研要点）
+# ==========================
+@st.cache_data
 def load_builtin_knowledge():
     try:
-        # 原有 Excel 文件
-        survey_df = pd.read_excel("调研要点.xlsx", sheet_name=0)
-        survey_text = survey_df.to_string(index=False)
-
-        tbs = pd.read_excel("TBS-V2.xlsx", sheet_name="Sheet2")
-        tbs_grouped = tbs.groupby("模块")
-        tbs_by_category = {}
-        for cat in ["禁止类", "限制类", "关注类", "部分有", "是", "否"]:
-            subset = tbs[tbs["禁止类 / 限制类 / 关注类"].str.contains(cat, na=False)]
-            tbs_by_category[cat] = subset.to_dict(orient="records")
-
-        # 新增：加载 BP提示词内容.docx（核心输出格式模板）
+        # BP提示词模板（核心输出格式）
         bp_doc = Document("BP提示词内容.docx")
         bp_template = "\n".join(p.text.strip() for p in bp_doc.paragraphs if p.text.strip())
-
+        
+        # TBS-V2
+        tbs = pd.read_excel("TBS-V2.xlsx", sheet_name="Sheet2")
+        
+        # 调研要点
+        survey_df = pd.read_excel("调研要点.xlsx", sheet_name=0)
+        survey_text = survey_df.to_string(index=False)
+        
         return {
-            "survey_text": survey_text,
-            "tbs_raw": tbs,
-            "tbs_grouped": tbs_grouped,
-            "tbs_by_category": tbs_by_category,
+            "bp_template": bp_template,
             "tbs_text": tbs.to_string(index=False),
-            "bp_template": bp_template   # ← 核心：BP提示词完整模板
+            "survey_text": survey_text
         }
     except Exception as e:
-        st.error(f"加载内置知识库失败: {e}")
+        st.error(f"知识库加载失败: {e}")
         st.stop()
-
 
 BUILTIN_KNOWLEDGE = load_builtin_knowledge()
 
-# ────────────────────────────────────────────────
-# 2. 文件读取函数（用户上传的商业计划书）
-# ────────────────────────────────────────────────
-def extract_text_from_uploaded_file(uploaded_file):
-    if uploaded_file is None:
+# ==========================
+# 文件读取函数
+# ==========================
+def extract_text_from_file(uploaded_file):
+    if not uploaded_file:
         return ""
-    file_ext = os.path.splitext(uploaded_file.name)[1].lower()
+    ext = os.path.splitext(uploaded_file.name)[1].lower()
     bytes_data = uploaded_file.read()
     uploaded_file.seek(0)
-    if file_ext == ".pdf":
-        reader = PdfReader(io.BytesIO(bytes_data))
+    
+    if ext == ".pdf":
+        reader = PdfReader(bytes_data)
         return "\n".join(page.extract_text() or "" for page in reader.pages)
-    elif file_ext == ".pptx":
-        prs = Presentation(io.BytesIO(bytes_data))
-        texts = []
-        for slide in prs.slides:
-            for shape in slide.shapes:
-                if hasattr(shape, "text"):
-                    texts.append(shape.text)
-        return "\n".join(texts)
-    else:
-        return ""
+    elif ext == ".pptx":
+        prs = Presentation(bytes_data)
+        return "\n".join(shape.text for slide in prs.slides for shape in slide.shapes if hasattr(shape, "text"))
+    return ""
 
+# ==========================
+# 上传区域（简洁版）
+# ==========================
+uploaded_file = st.file_uploader(
+    "上传项目资料（PDF / PPTX）",
+    type=["pdf", "pptx"],
+    help="建议文件不超过20MB"
+)
 
-# ────────────────────────────────────────────────
-# 3. 主界面（标题已优化为 BP 初筛场景）
-# ────────────────────────────────────────────────
-st.set_page_config(page_title="科技项目初筛分析（BP提示词格式）", layout="wide")
-st.title("🔍 科技项目初筛分析")
-st.caption("严格按照 BP提示词内容.docx 格式输出 · 结合 TBS-V2 + 调研要点 · 仅基于上传文档")
-
-uploaded_file = st.file_uploader("上传项目资料（PDF / PPTX）", type=["pdf", "pptx"])
-
+# ==========================
+# 分析流程
+# ==========================
 if uploaded_file:
     with st.spinner("正在提取文档内容..."):
-        doc_text = extract_text_from_uploaded_file(uploaded_file)
-
-    if not doc_text.strip():
-        st.error("无法从文件中提取有效文本，请检查文件内容。")
-    else:
-        st.success("文档内容提取完成")
-        with st.expander("文档提取预览（前800字）"):
-            st.text(doc_text[:800] + "...")
-
-    if st.button("🚀 开始初筛分析（严格按BP提示词格式输出）", type="primary"):
-        with st.spinner("正在生成结构化初筛报告..."):
-            # 核心修改：使用 BP提示词内容.docx 作为完整输出模板
-            prompt = f"""{BUILTIN_KNOWLEDGE['bp_template']}
+        doc_text = extract_text_from_file(uploaded_file)
+    
+    st.success("✅ 文档内容提取完成")
+    
+    if st.button("🚀 开始初筛分析", type="primary"):
+        prompt = f"""{BUILTIN_KNOWLEDGE['bp_template']}
 
 用户上传的BP文档内容（请严格基于此内容进行分析，不得编造任何未提及信息）：
-{doc_text[:12000]}
+{doc_text[:15000]}
 
-内置 TBS-V2 规则摘要（用于合规与风险评价）：
-{BUILTIN_KNOWLEDGE['tbs_text'][:8000]}
+内置 TBS-V2 规则摘要：
+{BUILTIN_KNOWLEDGE['tbs_text'][:10000]}
 
-内置调研要点摘要（用于评估维度补充）：
-{BUILTIN_KNOWLEDGE['survey_text'][:3000]}
+内置调研要点摘要：
+{BUILTIN_KNOWLEDGE['survey_text'][:5000]}
 """
 
+        with st.spinner("AI 正在生成结构化初筛报告..."):
             try:
                 response = dashscope.Generation.call(
                     model="qwen-max",
                     prompt=prompt,
                     temperature=0.1,
-                    max_tokens=8000,
-                    result_format="message"
+                    max_tokens=12000
                 )
-                analysis_result = response.output.choices[0].message.content
-                st.markdown(analysis_result)
-
-                # 一键下载
-                st.download_button(
-                    label="📥 下载完整初筛报告（Markdown）",
-                    data=analysis_result,
-                    file_name="项目初筛报告.md",
-                    mime="text/markdown"
-                )
+                result = response.output.text
             except Exception as e:
-                st.error(f"调用大模型失败：{e}")
+                st.error(f"分析失败: {e}")
+                result = ""
+
+        if result:
+            st.subheader("📋 项目初筛分析报告")
+            st.markdown(result)
+            
+            # 下载按钮
+            st.download_button(
+                label="📥 下载完整报告（Markdown）",
+                data=result,
+                file_name="项目初筛分析报告.md",
+                mime="text/markdown"
+            )
+else:
+    st.info("请上传项目资料文件（PDF 或 PPTX）")
