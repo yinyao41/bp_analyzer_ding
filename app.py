@@ -7,118 +7,111 @@ import os
 import io
 from docx import Document
 
-# ==========================
-# API Key
-# ==========================
-dashscope.api_key = os.environ.get("DASHSCOPE_API_KEY")
-
-# ==========================
-# 页面设置（已去除所有红框提示）
-# ==========================
-st.set_page_config(page_title="科技项目初筛分析", layout="wide")
-st.title("🔍 科技项目初筛分析")
-
-# ==========================
-# 加载内置知识库
-# ==========================
-@st.cache_data
+# ────────────────────────────────────────────────
+# 1. 全局常量 & 缓存读取（程序启动时执行一次）
+# ────────────────────────────────────────────────
+@st.cache_data(show_spinner="正在加载内置知识库...")
 def load_builtin_knowledge():
     try:
+        survey_df = pd.read_excel("调研要点.xlsx", sheet_name=0)
+        survey_text = survey_df.to_string(index=False)
+
+        tbs = pd.read_excel("TBS-V2.xlsx", sheet_name="Sheet2")
+        tbs_grouped = tbs.groupby("模块")
+        tbs_by_category = {}
+        for cat in ["禁止类", "限制类", "关注类", "部分有", "是", "否"]:
+            subset = tbs[tbs["禁止类 / 限制类 / 关注类"].str.contains(cat, na=False)]
+            tbs_by_category[cat] = subset.to_dict(orient="records")
+
         bp_doc = Document("BP提示词内容.docx")
         bp_template = "\n".join(p.text.strip() for p in bp_doc.paragraphs if p.text.strip())
-        
-        tbs = pd.read_excel("TBS-V2.xlsx", sheet_name="Sheet2")
-        survey_df = pd.read_excel("调研要点.xlsx", sheet_name=0)
-        
+
         return {
-            "bp_template": bp_template,
+            "survey_text": survey_text,
+            "tbs_raw": tbs,
+            "tbs_grouped": tbs_grouped,
+            "tbs_by_category": tbs_by_category,
             "tbs_text": tbs.to_string(index=False),
-            "survey_text": survey_df.to_string(index=False)
+            "bp_template": bp_template
         }
     except Exception as e:
-        st.error(f"知识库加载失败: {e}")
+        st.error(f"加载内置知识库失败: {e}")
         st.stop()
+
 
 BUILTIN_KNOWLEDGE = load_builtin_knowledge()
 
-# ==========================
-# 文件读取函数
-# ==========================
-def extract_text_from_file(uploaded_file):
-    if not uploaded_file:
+# ────────────────────────────────────────────────
+# 2. 文件读取函数（用户上传的商业计划书）
+# ────────────────────────────────────────────────
+def extract_text_from_uploaded_file(uploaded_file):
+    if uploaded_file is None:
         return ""
-    ext = os.path.splitext(uploaded_file.name)[1].lower()
+    file_ext = os.path.splitext(uploaded_file.name)[1].lower()
     bytes_data = uploaded_file.read()
     uploaded_file.seek(0)
-    
-    if ext == ".pdf":
+    if file_ext == ".pdf":
         reader = PdfReader(io.BytesIO(bytes_data))
         return "\n".join(page.extract_text() or "" for page in reader.pages)
-    elif ext == ".pptx":
+    elif file_ext == ".pptx":
         prs = Presentation(io.BytesIO(bytes_data))
-        return "\n".join(shape.text for slide in prs.slides 
-                        for shape in slide.shapes if hasattr(shape, "text"))
-    return ""
+        texts = []
+        for slide in prs.slides:
+            for shape in slide.shapes:
+                if hasattr(shape, "text"):
+                    texts.append(shape.text)
+        return "\n".join(texts)
+    else:
+        return ""
 
-# ==========================
-# 上传区域（简洁干净）
-# ==========================
-uploaded_file = st.file_uploader(
-    "上传项目资料（PDF / PPTX）",
-    type=["pdf", "pptx"],
-    help="建议文件不超过20MB"
-)
 
-# ==========================
-# 分析流程（核心修复）
-# ==========================
+# ────────────────────────────────────────────────
+# 3. 主界面
+# ────────────────────────────────────────────────
+st.set_page_config(page_title="科技项目初筛分析（BP提示词格式）", layout="wide")
+st.title("🔍 科技项目初筛分析")
+
+uploaded_file = st.file_uploader("上传项目资料（PDF / PPTX）", type=["pdf", "pptx"])
+
 if uploaded_file:
     with st.spinner("正在提取文档内容..."):
-        doc_text = extract_text_from_file(uploaded_file)
-    
-    st.success("✅ 文档内容提取完成")
-    
-    if st.button("🚀 开始初筛分析", type="primary"):
-        # 严格控制长度，避免模型返回空
-        prompt = f"""{BUILTIN_KNOWLEDGE['bp_template']}
+        doc_text = extract_text_from_uploaded_file(uploaded_file)
+
+    if not doc_text.strip():
+        st.error("无法从文件中提取有效文本，请检查文件内容。")
+    else:
+        st.success("文档内容提取完成")
+
+    if st.button("🚀 开始初筛分析（严格按BP提示词格式输出）", type="primary"):
+        with st.spinner("正在生成结构化初筛报告..."):
+            prompt = f"""{BUILTIN_KNOWLEDGE['bp_template']}
 
 用户上传的BP文档内容（请严格基于此内容进行分析，不得编造任何未提及信息）：
-{doc_text[:8000]}
+{doc_text[:12000]}
 
-内置 TBS-V2 规则摘要：
-{BUILTIN_KNOWLEDGE['tbs_text'][:6000]}
+内置 TBS-V2 规则摘要（用于合规与风险评价）：
+{BUILTIN_KNOWLEDGE['tbs_text'][:8000]}
 
-内置调研要点摘要：
+内置调研要点摘要（用于评估维度补充）：
 {BUILTIN_KNOWLEDGE['survey_text'][:3000]}
 """
 
-        with st.spinner("AI 正在生成结构化初筛报告..."):
             try:
                 response = dashscope.Generation.call(
                     model="qwen-max",
                     prompt=prompt,
                     temperature=0.1,
-                    max_tokens=12000
+                    max_tokens=8000,
+                    result_format="message"
                 )
-                # 安全提取结果（防止 NoneType 报错）
-                result = response.output.text if hasattr(response, "output") and hasattr(response.output, "text") else ""
-                
-            except Exception as e:
-                st.error(f"分析失败: {str(e)}")
-                result = ""
+                analysis_result = response.output.choices[0].message.content
+                st.markdown(analysis_result)
 
-        # ====================== 显示报告 ======================
-        st.subheader("📋 项目初筛分析报告")
-        
-        if result and result.strip():
-            st.markdown(result)
-            st.download_button(
-                label="📥 下载完整报告（Markdown）",
-                data=result,
-                file_name="项目初筛分析报告.md",
-                mime="text/markdown"
-            )
-        else:
-            st.warning("⚠️ AI 返回为空（提示词过长或文档内容复杂）。建议换一个更短的 PDF 重试，或稍后尝试。")
-else:
-    st.info("请上传项目资料文件（PDF 或 PPTX）")
+                st.download_button(
+                    label="📥 下载完整初筛报告（Markdown）",
+                    data=analysis_result,
+                    file_name="项目初筛报告.md",
+                    mime="text/markdown"
+                )
+            except Exception as e:
+                st.error(f"调用大模型失败：{e}")
