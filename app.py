@@ -4,7 +4,7 @@ from pypdf import PdfReader
 from pptx import Presentation
 import dashscope
 import os
-import io                     # ← 新增，必须导入
+import io
 from docx import Document
 
 # ==========================
@@ -13,13 +13,13 @@ from docx import Document
 dashscope.api_key = os.environ.get("DASHSCOPE_API_KEY")
 
 # ==========================
-# 页面设置（已去除所有红框提示）
+# 页面设置
 # ==========================
 st.set_page_config(page_title="科技项目初筛分析", layout="wide")
 st.title("🔍 科技项目初筛分析")
 
 # ==========================
-# 加载内置知识库（BP提示词 + TBS-V2 + 调研要点）
+# 加载内置知识库
 # ==========================
 @st.cache_data
 def load_builtin_knowledge():
@@ -42,7 +42,7 @@ def load_builtin_knowledge():
 BUILTIN_KNOWLEDGE = load_builtin_knowledge()
 
 # ==========================
-# 文件读取函数（已修复核心 Bug）
+# 文件读取函数（已修复）
 # ==========================
 def extract_text_from_file(uploaded_file):
     if not uploaded_file:
@@ -50,17 +50,18 @@ def extract_text_from_file(uploaded_file):
     
     ext = os.path.splitext(uploaded_file.name)[1].lower()
     bytes_data = uploaded_file.read()
-    uploaded_file.seek(0)                  # 重要：重置指针
+    uploaded_file.seek(0)
     
     if ext == ".pdf":
-        reader = PdfReader(io.BytesIO(bytes_data))   # ← 关键修复
+        reader = PdfReader(io.BytesIO(bytes_data))
         return "\n".join(page.extract_text() or "" for page in reader.pages)
     
     elif ext == ".pptx":
-        prs = Presentation(io.BytesIO(bytes_data))   # ← 也用 BytesIO 更安全
-        return "\n".join(shape.text for slide in prs.slides 
-                        for shape in slide.shapes if hasattr(shape, "text"))
-    
+        prs = Presentation(io.BytesIO(bytes_data))
+        return "\n".join(
+            shape.text for slide in prs.slides 
+            for shape in slide.shapes if hasattr(shape, "text")
+        )
     return ""
 
 # ==========================
@@ -100,11 +101,18 @@ if uploaded_file:
                     model="qwen-max",
                     prompt=prompt,
                     temperature=0.1,
-                    max_tokens=12000
+                    max_tokens=12000,
+                    result_format="message"          # ← 关键修复
                 )
-                result = response.output.text
+                
+                # 新版正确的取值方式
+                result = response.output.choices[0].message.content
+                
             except Exception as e:
-                st.error(f"分析失败: {e}")
+                st.error(f"分析失败: {str(e)}")
+                # 调试用（上线后可删除）
+                if "response" in locals():
+                    st.caption(f"调试信息: {type(response)}")
                 result = ""
 
         if result:
