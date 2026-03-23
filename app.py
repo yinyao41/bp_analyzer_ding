@@ -61,7 +61,7 @@ def extract_text_from_file(uploaded_file):
     return ""
 
 # ==========================
-# 上传区域（简洁版）
+# 上传区域（简洁干净）
 # ==========================
 uploaded_file = st.file_uploader(
     "上传项目资料（PDF / PPTX）",
@@ -70,7 +70,7 @@ uploaded_file = st.file_uploader(
 )
 
 # ==========================
-# 分析流程
+# 分析流程（核心修复）
 # ==========================
 if uploaded_file:
     with st.spinner("正在提取文档内容..."):
@@ -79,16 +79,17 @@ if uploaded_file:
     st.success("✅ 文档内容提取完成")
     
     if st.button("🚀 开始初筛分析", type="primary"):
+        # 严格控制长度，避免模型返回空
         prompt = f"""{BUILTIN_KNOWLEDGE['bp_template']}
 
 用户上传的BP文档内容（请严格基于此内容进行分析，不得编造任何未提及信息）：
-{doc_text[:10000]}
+{doc_text[:8000]}
 
 内置 TBS-V2 规则摘要：
-{BUILTIN_KNOWLEDGE['tbs_text'][:8000]}
+{BUILTIN_KNOWLEDGE['tbs_text'][:6000]}
 
 内置调研要点摘要：
-{BUILTIN_KNOWLEDGE['survey_text'][:4000]}
+{BUILTIN_KNOWLEDGE['survey_text'][:3000]}
 """
 
         with st.spinner("AI 正在生成结构化初筛报告..."):
@@ -99,13 +100,16 @@ if uploaded_file:
                     temperature=0.1,
                     max_tokens=12000
                 )
-                result = response.output.text
+                # 安全提取结果（防止 NoneType 报错）
+                result = response.output.text if hasattr(response, "output") and hasattr(response.output, "text") else ""
                 
             except Exception as e:
                 st.error(f"分析失败: {str(e)}")
                 result = ""
 
+        # ====================== 显示报告 ======================
         st.subheader("📋 项目初筛分析报告")
+        
         if result and result.strip():
             st.markdown(result)
             st.download_button(
@@ -115,6 +119,6 @@ if uploaded_file:
                 mime="text/markdown"
             )
         else:
-            st.warning("⚠️ AI 返回为空，建议换一个更清晰的文档重试")
+            st.warning("⚠️ AI 返回为空（提示词过长或文档内容复杂）。建议换一个更短的 PDF 重试，或稍后尝试。")
 else:
     st.info("请上传项目资料文件（PDF 或 PPTX）")
