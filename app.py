@@ -101,7 +101,7 @@ if uploaded_file:
     else:
         st.success("文档内容提取完成")
 
-    if st.button("🚀 开始初筛分析", type="primary"):
+    if st.button("🚀 开始初筛分析（严格按BP提示词格式输出）", type="primary"):
 
         # ── 缩减 prompt，控制总 token 量 ──
         prompt = f"""{BUILTIN_KNOWLEDGE['bp_template']}
