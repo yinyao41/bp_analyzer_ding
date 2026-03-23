@@ -3,12 +3,14 @@ import pandas as pd
 from pypdf import PdfReader
 from pptx import Presentation
 import dashscope
+from dashscope import Generation
 import os
 import io
 from docx import Document
+from http import HTTPStatus
 
 # ────────────────────────────────────────────────
-# 1. 全局常量 & 缓存读取（程序启动时执行一次）
+# 1. 全局常量 & 缓存读取
 # ────────────────────────────────────────────────
 @st.cache_data(show_spinner="正在加载内置知识库...")
 def load_builtin_knowledge():
@@ -42,7 +44,7 @@ def load_builtin_knowledge():
 BUILTIN_KNOWLEDGE = load_builtin_knowledge()
 
 # ────────────────────────────────────────────────
-# 2. 文件读取函数（用户上传的商业计划书）
+# 2. 文件读取函数
 # ────────────────────────────────────────────────
 def extract_text_from_uploaded_file(uploaded_file):
     if uploaded_file is None:
@@ -66,9 +68,26 @@ def extract_text_from_uploaded_file(uploaded_file):
 
 
 # ────────────────────────────────────────────────
-# 3. 主界面
+# 3. 流式调用函数
 # ────────────────────────────────────────────────
-st.set_page_config(page_title="科技项目初筛分析（BP提示词格式）", layout="wide")
+def call_llm_streaming(prompt: str):
+    """使用流式输出调用 qwen-max，边生成边显示"""
+    responses = Generation.call(
+        model="qwen-max",
+        prompt=prompt,
+        temperature=0.1,
+        max_tokens=4000,          # ← 从8000降至4000，大幅提速
+        result_format="message",
+        stream=True,              # ← 开启流式
+        incremental_output=True   # ← 增量输出
+    )
+    return responses
+
+
+# ────────────────────────────────────────────────
+# 4. 主界面
+# ────────────────────────────────────────────────
+st.set_page_config(page_title="科技项目初筛分析", layout="wide")
 st.title("🔍 科技项目初筛分析")
 
 uploaded_file = st.file_uploader("上传项目资料（PDF / PPTX）", type=["pdf", "pptx"])
@@ -83,35 +102,52 @@ if uploaded_file:
         st.success("文档内容提取完成")
 
     if st.button("🚀 开始初筛分析（严格按BP提示词格式输出）", type="primary"):
-        with st.spinner("正在生成结构化初筛报告..."):
-            prompt = f"""{BUILTIN_KNOWLEDGE['bp_template']}
 
-用户上传的BP文档内容（请严格基于此内容进行分析，不得编造任何未提及信息）：
-{doc_text[:12000]}
+        # ── 缩减 prompt，控制总 token 量 ──
+        prompt = f"""{BUILTIN_KNOWLEDGE['bp_template']}
 
-内置 TBS-V2 规则摘要（用于合规与风险评价）：
-{BUILTIN_KNOWLEDGE['tbs_text'][:8000]}
+用户上传的BP文档内容（严格基于此内容分析，不得编造）：
+{doc_text[:6000]}
 
-内置调研要点摘要（用于评估维度补充）：
-{BUILTIN_KNOWLEDGE['survey_text'][:3000]}
+TBS-V2 规则摘要（合规与风险评价）：
+{BUILTIN_KNOWLEDGE['tbs_text'][:3000]}
+
+调研要点摘要（评估维度补充）：
+{BUILTIN_KNOWLEDGE['survey_text'][:1500]}
 """
 
-            try:
-                response = dashscope.Generation.call(
-                    model="qwen-max",
-                    prompt=prompt,
-                    temperature=0.1,
-                    max_tokens=8000,
-                    result_format="message"
-                )
-                analysis_result = response.output.choices[0].message.content
-                st.markdown(analysis_result)
+        st.info(f"📊 Prompt 长度：约 {len(prompt)} 字符，正在生成报告...")
 
+        # ── 流式输出到页面 ──
+        result_placeholder = st.empty()
+        full_result = ""
+
+        try:
+            with st.spinner("⏳ 正在生成初筛报告（流式输出，约30-50秒）..."):
+                responses = call_llm_streaming(prompt)
+                for response in responses:
+                    if response.status_code == HTTPStatus.OK:
+                        chunk = response.output.choices[0].message.content
+                        if chunk:
+                            full_result += chunk
+                            result_placeholder.markdown(full_result + "▌")  # 光标效果
+                    else:
+                        st.error(f"API错误：{response.status_code} - {response.message}")
+                        break
+
+            # 输出完成，去掉光标
+            result_placeholder.markdown(full_result)
+            st.success("✅ 报告生成完成")
+
+            # 下载按钮
+            if full_result:
                 st.download_button(
                     label="📥 下载完整初筛报告（Markdown）",
-                    data=analysis_result,
+                    data=full_result,
                     file_name="项目初筛报告.md",
                     mime="text/markdown"
                 )
-            except Exception as e:
-                st.error(f"调用大模型失败：{e}")
+
+        except Exception as e:
+            st.error(f"调用大模型失败：{e}")
+            st.info("💡 建议：检查 API Key 是否有效，或网络是否正常")
