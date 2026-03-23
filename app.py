@@ -107,3 +107,18 @@ if uploaded_file:
                     model="qwen-max",
                     prompt=prompt,
                     temperature=0.1,
+                    max_tokens=8000,
+                    result_format="message"
+                )
+                analysis_result = response.output.choices[0].message.content
+                st.markdown(analysis_result)
+
+                # 一键下载
+                st.download_button(
+                    label="📥 下载完整初筛报告（Markdown）",
+                    data=analysis_result,
+                    file_name="项目初筛报告.md",
+                    mime="text/markdown"
+                )
+            except Exception as e:
+                st.error(f"调用大模型失败：{e}")
