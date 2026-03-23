@@ -7,20 +7,12 @@ import os
 import io
 from docx import Document
 
-# ==========================
-# API Key
-# ==========================
 dashscope.api_key = os.environ.get("DASHSCOPE_API_KEY")
 
-# ==========================
-# 页面设置
-# ==========================
 st.set_page_config(page_title="科技项目初筛分析", layout="wide")
 st.title("🔍 科技项目初筛分析")
 
-# ==========================
-# 加载内置知识库
-# ==========================
+# ========================== 知识库加载 ==========================
 @st.cache_data
 def load_builtin_knowledge():
     try:
@@ -41,9 +33,7 @@ def load_builtin_knowledge():
 
 BUILTIN_KNOWLEDGE = load_builtin_knowledge()
 
-# ==========================
-# 文件读取（已稳定）
-# ==========================
+# ========================== 文件读取 ==========================
 def extract_text_from_file(uploaded_file):
     if not uploaded_file:
         return ""
@@ -60,18 +50,13 @@ def extract_text_from_file(uploaded_file):
                         for shape in slide.shapes if hasattr(shape, "text"))
     return ""
 
-# ==========================
-# 上传区
-# ==========================
+# ========================== 上传区 ==========================
 uploaded_file = st.file_uploader(
     "上传项目资料（PDF / PPTX）",
     type=["pdf", "pptx"],
     help="建议文件不超过20MB"
 )
 
-# ==========================
-# 分析流程（核心修复）
-# ==========================
 if uploaded_file:
     with st.spinner("正在提取文档内容..."):
         doc_text = extract_text_from_file(uploaded_file)
@@ -79,49 +64,64 @@ if uploaded_file:
     st.success("✅ 文档内容提取完成")
     
     if st.button("🚀 开始初筛分析", type="primary"):
-        # 构造提示词（长度控制在安全范围内）
+        # === 关键优化：大幅缩短长度，避免超限 ===
         prompt = f"""{BUILTIN_KNOWLEDGE['bp_template']}
 
-用户上传的BP文档内容（请严格基于此内容进行分析，不得编造任何未提及信息）：
-{doc_text[:10000]}
+用户上传的BP文档内容（请严格基于此内容进行分析）：
+{doc_text[:6000]}
 
-内置 TBS-V2 规则摘要：
-{BUILTIN_KNOWLEDGE['tbs_text'][:8000]}
+TBS-V2 规则摘要：
+{BUILTIN_KNOWLEDGE['tbs_text'][:3000]}
 
-内置调研要点摘要：
-{BUILTIN_KNOWLEDGE['survey_text'][:4000]}
+调研要点摘要：
+{BUILTIN_KNOWLEDGE['survey_text'][:3000]}
 """
 
-        with st.spinner("AI 正在生成结构化初筛报告..."):
+        with st.spinner("AI 正在生成报告..."):
             try:
-                # === 最稳定调用方式（已验证可返回内容）===
                 response = dashscope.Generation.call(
                     model="qwen-max",
-                    prompt=prompt,
+                    messages=[{"role": "user", "content": prompt}],
+                    result_format="message",
                     temperature=0.1,
                     max_tokens=12000
                 )
                 
-                result = response.output.text if hasattr(response, "output") and hasattr(response.output, "text") else ""
-                
-                if not result.strip():
-                    result = "AI 返回内容为空，请尝试更换更清晰的文档或稍后重试。"
+                # 安全提取（兼容新旧返回结构）
+                if (hasattr(response, "output") and 
+                    hasattr(response.output, "choices") and 
+                    response.output.choices):
+                    result = response.output.choices[0].message.content
+                else:
+                    result = ""
                     
             except Exception as e:
-                st.error(f"分析失败: {str(e)}")
+                st.error(f"API 调用失败: {str(e)}")
                 result = ""
 
-        # 显示报告
+        # ====================== 显示结果 ======================
         st.subheader("📋 项目初筛分析报告")
-        st.markdown(result)
         
-        # 下载按钮
-        st.download_button(
-            label="📥 下载完整报告（Markdown）",
-            data=result,
-            file_name="项目初筛分析报告.md",
-            mime="text/markdown"
-        )
+        if result and result.strip():
+            st.markdown(result)
+            st.download_button(
+                label="📥 下载完整报告（Markdown）",
+                data=result,
+                file_name="项目初筛分析报告.md",
+                mime="text/markdown"
+            )
+        else:
+            st.warning("⚠️ AI 返回内容为空（可能是提示词过长或文档内容复杂）。建议尝试更短的 PDF 或稍后重试。")
+        
+        # ====================== 调试面板（上线后可删） ======================
+        with st.expander("🔧 调试信息（点开看真实返回）", expanded=False):
+            st.write("**Prompt 长度**:", len(prompt))
+            st.write("**文档提取长度**:", len(doc_text))
+            if 'response' in locals():
+                st.write("**Raw Response 类型**:", type(response))
+                st.write("**Output 是否存在**:", hasattr(response, "output"))
+                if hasattr(response, "output"):
+                    st.json(str(response.output)[:2000])  # 只显示前2000字符
+
 else:
     st.info("请上传项目资料文件（PDF 或 PPTX）")
-    
