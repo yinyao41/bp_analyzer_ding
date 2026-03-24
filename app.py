@@ -87,8 +87,8 @@ def call_llm_streaming(prompt: str):
 # ────────────────────────────────────────────────
 # 4. 主界面
 # ────────────────────────────────────────────────
-st.set_page_config(page_title="科技项目初筛分析", layout="wide")
-st.title("🔍 科技项目初筛分析")
+st.set_page_config(page_title="科创企业经营管理系统（TBS）", layout="wide")
+st.title("🔍 科创企业经营管理系统（TBS）")
 
 uploaded_file = st.file_uploader("上传项目资料（PDF / PPTX）", type=["pdf", "pptx"])
 
