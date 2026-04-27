@@ -17,17 +17,14 @@ def load_builtin_knowledge():
     try:
         survey_df = pd.read_excel("调研要点.xlsx", sheet_name=0)
         survey_text = survey_df.to_string(index=False)
-
         tbs = pd.read_excel("TBS-V2.xlsx", sheet_name="Sheet2")
         tbs_grouped = tbs.groupby("模块")
         tbs_by_category = {}
         for cat in ["禁止类", "限制类", "关注类", "部分有", "是", "否"]:
             subset = tbs[tbs["禁止类 / 限制类 / 关注类"].str.contains(cat, na=False)]
             tbs_by_category[cat] = subset.to_dict(orient="records")
-
         bp_doc = Document("BP提示词内容.docx")
         bp_template = "\n".join(p.text.strip() for p in bp_doc.paragraphs if p.text.strip())
-
         return {
             "survey_text": survey_text,
             "tbs_raw": tbs,
@@ -39,7 +36,6 @@ def load_builtin_knowledge():
     except Exception as e:
         st.error(f"加载内置知识库失败: {e}")
         st.stop()
-
 
 BUILTIN_KNOWLEDGE = load_builtin_knowledge()
 
@@ -66,7 +62,6 @@ def extract_text_from_uploaded_file(uploaded_file):
     else:
         return ""
 
-
 # ────────────────────────────────────────────────
 # 3. 流式调用函数
 # ────────────────────────────────────────────────
@@ -76,13 +71,12 @@ def call_llm_streaming(prompt: str):
         model="qwen-max",
         prompt=prompt,
         temperature=0.1,
-        max_tokens=4000,          # ← 从8000降至4000，大幅提速
+        max_tokens=4000,
         result_format="message",
-        stream=True,              # ← 开启流式
-        incremental_output=True   # ← 增量输出
+        stream=True,
+        incremental_output=True
     )
     return responses
-
 
 # ────────────────────────────────────────────────
 # 4. 主界面
@@ -95,33 +89,28 @@ uploaded_file = st.file_uploader("上传项目资料（PDF / PPTX）", type=["pd
 if uploaded_file:
     with st.spinner("正在提取文档内容..."):
         doc_text = extract_text_from_uploaded_file(uploaded_file)
-
+    
     if not doc_text.strip():
         st.error("无法从文件中提取有效文本，请检查文件内容。")
     else:
         st.success("文档内容提取完成")
-
+    
     if st.button("🚀 开始初筛分析 ", type="primary"):
-
         # ── 缩减 prompt，控制总 token 量 ──
         prompt = f"""{BUILTIN_KNOWLEDGE['bp_template']}
-
 用户上传的BP文档内容（严格基于此内容分析，不得编造）：
 {doc_text[:6000]}
-
 TBS-V2 规则摘要（合规与风险评价）：
 {BUILTIN_KNOWLEDGE['tbs_text'][:3000]}
-
 调研要点摘要（评估维度补充）：
 {BUILTIN_KNOWLEDGE['survey_text'][:1500]}
 """
-
         st.info(f"📊 Prompt 长度：约 {len(prompt)} 字符，正在生成报告...")
-
+        
         # ── 流式输出到页面 ──
         result_placeholder = st.empty()
         full_result = ""
-
+        
         try:
             with st.spinner("⏳ 正在生成初筛报告（流式输出，约30-50秒）..."):
                 responses = call_llm_streaming(prompt)
@@ -134,12 +123,18 @@ TBS-V2 规则摘要（合规与风险评价）：
                     else:
                         st.error(f"API错误：{response.status_code} - {response.message}")
                         break
-
-            # 输出完成，去掉光标
+            
+            # ==================== 修改点 ====================
+            # 输出完成后，强制添加一句话（不大改动原有逻辑）
+            full_result += "\n\n---\n**免责声明**：回答只做参考，不作为正式建议。"
+            
+            # 输出完成，去掉光标并显示最终结果
             result_placeholder.markdown(full_result)
+            # ===============================================
+            
             st.success("✅ 报告生成完成")
-
-            # 下载按钮
+            
+            # 下载按钮（同时包含免责声明）
             if full_result:
                 st.download_button(
                     label="📥 下载完整初筛报告（Markdown）",
@@ -147,7 +142,7 @@ TBS-V2 规则摘要（合规与风险评价）：
                     file_name="项目初筛报告.md",
                     mime="text/markdown"
                 )
-
+        
         except Exception as e:
             st.error(f"调用大模型失败：{e}")
             st.info("💡 建议：检查 API Key 是否有效，或网络是否正常")
